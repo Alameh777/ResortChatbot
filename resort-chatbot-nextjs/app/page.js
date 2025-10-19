@@ -5,13 +5,7 @@ import { MessageCircle, X, Send } from 'lucide-react';
 
 export default function Home() {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([
-    {
-      type: 'bot',
-      text: 'Hi! 👋 Welcome to our resort. How can I help you today?',
-      timestamp: new Date()
-    }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef(null);
@@ -23,6 +17,17 @@ export default function Home() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, isTyping]);
+
+  useEffect(() => {
+    // Set initial message on client side only
+    setMessages([
+      {
+        type: 'bot',
+        text: 'Hi! 👋 Welcome to our resort. How can I help you today?',
+        timestamp: new Date()
+      }
+    ]);
+  }, []);
 
   const handleSend = async () => {
     if (!inputValue.trim()) return;
@@ -39,13 +44,21 @@ export default function Home() {
     setIsTyping(true);
 
     try {
+      // Build conversation context from recent messages
+      const conversationContext = messages.slice(-6).map(m => 
+        `${m.type === 'user' ? 'User' : 'Assistant'}: ${m.text}`
+      ).join('\n');
+
       // Call our API route
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: currentInput }),
+        body: JSON.stringify({ 
+          message: currentInput,
+          conversationContext 
+        }),
       });
 
       const data = await response.json();
@@ -53,7 +66,8 @@ export default function Home() {
       const botMessage = {
         type: 'bot',
         text: data.reply || 'Sorry, I encountered an error. Please try again.',
-        timestamp: new Date()
+        timestamp: new Date(),
+        bookingData: data.bookingData
       };
 
       setMessages(prev => [...prev, botMessage]);
@@ -161,7 +175,7 @@ export default function Home() {
                         : 'bg-white text-gray-800 rounded-bl-sm shadow-sm'
                     }`}
                   >
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.text}</p>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap text-black">{message.text}</p>
                     <p
                       className={`text-xs mt-1 ${
                         message.type === 'user' ? 'text-blue-100' : 'text-gray-400'
