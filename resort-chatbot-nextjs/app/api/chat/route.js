@@ -193,8 +193,11 @@ if (reply.includes('BOOKING_REQUEST:')) {
       console.log('🔍 Attempting to parse JSON:', jsonString);
       const bookingRequest = JSON.parse(jsonString);
           
-          // Remove the booking request from the reply
-          reply = reply.replace(/BOOKING_REQUEST:.*$/s, '').trim();
+          // Remove ALL booking request JSON from the reply (including multiple occurrences)
+      reply = reply.replace(/BOOKING_REQUEST:\s*\{[\s\S]*?\}/g, '').trim();
+
+// Clean up any leftover whitespace or duplicate spaces
+      reply = reply.replace(/\s+/g, ' ').trim();
           
           // Make the booking
           const bookingResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/bookings`, {
