@@ -82,7 +82,7 @@ export async function POST(request) {
       if (rooms && rooms.length > 0) {
         contextData += '\n\nAvailable Rooms:\n';
         rooms.forEach(room => {
-          contextData += `- Room ${room.room_number} (ID: ${room.id}): ${room.room_type} - $${room.price_per_night}/night (Capacity: ${room.capacity}) - Amenities: ${room.amenities?.join(', ')}\n`;
+         contextData += `- Room ${room.room_number}: ${room.room_type} - $${room.price_per_night}/night (Capacity: ${room.capacity}) - Amenities: ${room.amenities?.join(', ')}\n`;
         });
         
         if (isBookingIntent) {
@@ -96,7 +96,7 @@ export async function POST(request) {
       if (services && services.length > 0) {
         contextData += '\n\nSpa Services:\n';
         services.forEach(service => {
-          contextData += `- ${service.service_name} (ID: ${service.id}): ${service.description} - $${service.price} (${service.duration_minutes} min)\n`;
+          contextData += `- Room ${room.room_number}: ${room.room_type} - $${room.price_per_night}/night (Capacity: ${room.capacity}) - Amenities: ${room.amenities?.join(', ')}\n`;
         });
         
         if (isBookingIntent) {
@@ -110,7 +110,7 @@ export async function POST(request) {
       if (activities && activities.length > 0) {
         contextData += '\n\nActivities:\n';
         activities.forEach(activity => {
-          contextData += `- ${activity.activity_name} (ID: ${activity.id}): ${activity.description} - $${activity.price || 'Free'} - Schedule: ${activity.schedule}\n`;
+        contextData += `- ${activity.activity_name}: ${activity.description} - $${activity.price || 'Free'} - Schedule: ${activity.schedule}\n`;
         });
       }
     }
