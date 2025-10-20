@@ -58,6 +58,12 @@ export async function POST(request) {
   try {
     const { message, conversationContext } = await request.json();
 
+     if (!message || message.trim() === '') {
+      return NextResponse.json({
+        reply: 'Please send a message to continue the conversation.',
+      });
+    }
+    
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
