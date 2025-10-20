@@ -91,11 +91,11 @@ export default function Home() {
   };
 
   const quickActions = [
-    '🏨 Check Availability',
-    '💆 Book Spa',
-    '🎯 View Activities',
-    '📞 Contact Us'
-  ];
+  '🏨 Show Available Rooms',
+  '💆 Spa Services',
+  '🎯 What Activities?',
+  '📞 Contact Information'
+];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
