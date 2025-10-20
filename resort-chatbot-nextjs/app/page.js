@@ -138,7 +138,7 @@ export default function Home() {
       </div>
 
       {/* Chatbot Widget */}
-      <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 font-sans">
+      <div className="fixed bottom-4 right-3 sm:bottom-6 sm:right-6 z-50 font-sans">
         {/* Chat Window */}
         {isOpen && (
           <div className="mb-4 w-96 max-w-[calc(100vw-2rem)] h-[600px] max-h-[calc(100vh-8rem)] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 duration-300 sm:w-96">
