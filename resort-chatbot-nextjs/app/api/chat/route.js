@@ -34,6 +34,19 @@ async function getActivities() {
   return data;
 }
 
+// Check room availability for specific dates
+async function checkRoomAvailabilityForDates(roomId, checkIn, checkOut) {
+  const { data, error } = await supabase
+    .from('reservations')
+    .select('*')
+    .eq('room_id', roomId)
+    .in('status', ['confirmed', 'pending'])
+    .or(`and(check_in_date.lte.${checkOut},check_out_date.gte.${checkIn})`);
+
+  if (error) return { available: false };
+  return { available: data.length === 0 };
+}
+
 export async function POST(request) {
   try {
     const { message, conversationContext } = await request.json();
@@ -48,16 +61,26 @@ export async function POST(request) {
     }
 
     let contextData = '';
+    let bookingData = null;
     const lowerMessage = message.toLowerCase();
 
-    // Detect what the user is asking about and provide information
-    if (lowerMessage.includes('room') || lowerMessage.includes('availab')) {
+    // Check if user wants to book
+    const isBookingIntent = lowerMessage.includes('book') || 
+                           lowerMessage.includes('reserve') || 
+                           lowerMessage.includes('make a reservation');
+
+    // Detect what the user is asking about
+    if (lowerMessage.includes('room') || lowerMessage.includes('availab') || isBookingIntent) {
       const rooms = await getRoomsAvailability();
       if (rooms && rooms.length > 0) {
         contextData += '\n\nAvailable Rooms:\n';
         rooms.forEach(room => {
           contextData += `- Room ${room.room_number}: ${room.room_type} - $${room.price_per_night}/night (Capacity: ${room.capacity}) - Amenities: ${room.amenities?.join(', ')}\n`;
         });
+        
+        if (isBookingIntent) {
+          contextData += '\n\n⚠️ IMPORTANT: Before booking, you MUST check if the room is available for the requested dates. When you have all booking details (room, dates, guest info), create the booking request and our system will verify availability.\n\nTo complete a booking, I need:\n1. Room number (e.g., Room 101)\n2. Check-in date (YYYY-MM-DD)\n3. Check-out date (YYYY-MM-DD)\n4. Number of guests\n5. Guest name\n6. Email address\n7. Phone number';
+        }
       }
     }
 
@@ -68,6 +91,10 @@ export async function POST(request) {
         services.forEach(service => {
           contextData += `- ${service.service_name}: ${service.description} - $${service.price} (${service.duration_minutes} min)\n`;
         });
+        
+        if (isBookingIntent) {
+          contextData += '\n\nTo book a spa service, I need:\n1. Service name\n2. Preferred date (YYYY-MM-DD)\n3. Preferred time (HH:MM in 24h format)\n4. Guest name\n5. Email address\n6. Phone number';
+        }
       }
     }
 
@@ -81,24 +108,39 @@ export async function POST(request) {
       }
     }
 
-    // Simplified system prompt - information only, no booking
-    const systemPrompt = `You are a helpful AI assistant for Paradise Resort & Spa. You help guests by providing information about:
-- Room types, prices, and amenities
-- Spa services and treatments
-- Resort activities and schedules
-- General resort information and facilities
-- Dining options and operating hours
+    // Enhanced system prompt
+    const systemPrompt = `You are a helpful AI assistant for Paradise Resort & Spa. You help guests with bookings, inquiries, and information.
 
-Be friendly, professional, and informative. Keep responses concise (3-5 sentences) unless more detail is requested.
+IMPORTANT BOOKING INSTRUCTIONS:
+- When a user wants to book, guide them through providing all required information
+- For room bookings: room number, check-in/check-out dates, number of guests, name, email, phone
+- For spa bookings: service name, date, time, name, email, phone
+- CRITICAL: You must map room numbers to their database IDs. Available rooms with their IDs:
+  * Room 101 = ID 1
+  * Room 102 = ID 2
+  * Room 103 = ID 6
+  * Room 104 = ID 7
+  * Room 201 = ID 3
+  * Room 202 = ID 4
+  * Room 301 = ID 5
+- Once you have ALL required information, respond naturally and include the BOOKING_REQUEST JSON
+- The booking will create a PENDING reservation that staff will review
+- Our system automatically checks if the room is available for those dates
+- Do NOT ask "Please confirm" or show the JSON to users - just create the request
+- Be conversational and ask for missing information naturally
 
-IMPORTANT: You provide information only. For actual bookings, politely tell guests to:
-- Call our reception: +1 (555) 123-4567
-- Email: reservations@paradiseresort.com
-- Visit our booking page: www.paradiseresort.com/book
+BOOKING_REQUEST FORMAT:
+For rooms: BOOKING_REQUEST: {"type":"room","data":{"roomId":1,"checkIn":"2025-12-25","checkOut":"2025-12-27","numGuests":2,"guestName":"John Doe","guestEmail":"john@email.com","guestPhone":"1234567890"}}
+
+For spa: BOOKING_REQUEST: {"type":"spa","data":{"serviceId":1,"appointmentDate":"2025-12-25","appointmentTime":"14:00","guestName":"John Doe","guestEmail":"john@email.com","guestPhone":"1234567890"}}
+
+CRITICAL: The JSON must be VALID and COMPLETE. Ensure all braces are closed. Do not add any text after the closing brace.
+
+Be friendly, professional, and helpful. Keep responses concise.
 
 ${contextData}`;
 
-    // Call Google Gemini API
+    // Call Gemini API
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
@@ -118,7 +160,7 @@ ${contextData}`;
           ],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 800,
+            maxOutputTokens: 1000,
           }
         }),
       }
@@ -134,9 +176,53 @@ ${contextData}`;
     }
 
     const data = await response.json();
-    const reply = data.candidates[0]?.content?.parts[0]?.text || 'Sorry, I could not generate a response.';
+    let reply = data.candidates[0]?.content?.parts[0]?.text || 'Sorry, I could not generate a response.';
 
-    return NextResponse.json({ reply });
+    // Check if AI wants to make a booking
+    if (reply.includes('BOOKING_REQUEST:')) {
+      const bookingMatch = reply.match(/BOOKING_REQUEST:\s*(\{[\s\S]*\})/);
+      if (bookingMatch) {
+        try {
+          let jsonString = bookingMatch[1].trim();
+          const lastBrace = jsonString.lastIndexOf('}');
+          if (lastBrace !== -1) {
+            jsonString = jsonString.substring(0, lastBrace + 1);
+          }
+          
+          console.log('🔍 Attempting to parse JSON:', jsonString);
+          const bookingRequest = JSON.parse(jsonString);
+          
+          // Remove ALL booking request JSON from the reply
+          reply = reply.replace(/BOOKING_REQUEST:\s*\{[\s\S]*?\}/g, '').trim();
+          reply = reply.replace(/\s+/g, ' ').trim();
+          
+          // Make the booking
+          console.log('📤 Sending booking request:', bookingRequest);
+          const protocol = request.headers.get('x-forwarded-proto') || 'http';
+          const host = request.headers.get('host') || 'localhost:3000';
+          const bookingResponse = await fetch(`${protocol}://${host}/api/bookings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bookingRequest)
+          });
+
+          const bookingResult = await bookingResponse.json();
+          console.log('📥 Booking response:', bookingResult);
+          
+          if (bookingResult.success) {
+            reply += `\n\n✅ ${bookingResult.message}`;
+            bookingData = bookingResult;
+          } else {
+            reply += `\n\n❌ ${bookingResult.message}`;
+          }
+        } catch (e) {
+          console.error('Booking processing error:', e);
+          reply += '\n\n❌ Sorry, there was an error processing your booking. Please try again.';
+        }
+      }
+    }
+
+    return NextResponse.json({ reply, bookingData });
 
   } catch (error) {
     console.error('Error in chat API:', error);
