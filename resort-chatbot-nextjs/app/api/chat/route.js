@@ -138,6 +138,9 @@ CRITICAL: The JSON must be VALID and COMPLETE. Ensure all braces are closed. Do 
 
 Be friendly, professional, and helpful. Keep responses concise.
 
+CRITICAL :You should always confirm availability before confirming the booking.
+          You can also answer general questions about the resort.
+      
 ${contextData}`;
 
     // Call Gemini API
@@ -180,6 +183,23 @@ ${contextData}`;
 
     // Check if AI wants to make a booking
     if (reply.includes('BOOKING_REQUEST:')) {
+
+      const { type, data } = bookingRequest;
+if (type === 'room') {
+  const { roomId, checkIn, checkOut } = data;
+
+  const protocol = request.headers.get('x-forwarded-proto') || 'http';
+  const host = request.headers.get('host') || 'localhost:3000';
+
+  const statusUrl = `${protocol}://${host}/api/bookings/status?roomId=${roomId}&checkIn=${checkIn}&checkOut=${checkOut}`;
+  const statusRes = await fetch(statusUrl);
+  const statusData = await statusRes.json();
+
+  if (!statusRes.ok || !statusData.isAvailable) {
+    reply += `\n\n⚠️ Sorry, this room is not available for those dates.\n${statusData.overlapping?.length ? 'Existing bookings:\n' + statusData.overlapping.map(o => `• ${o.check_in_date} → ${o.check_out_date} (${o.status})`).join('\n') : ''}`;
+    return NextResponse.json({ reply }); // Stop booking creation
+  }
+}
       const bookingMatch = reply.match(/BOOKING_REQUEST:\s*(\{[\s\S]*\})/);
       if (bookingMatch) {
         try {
