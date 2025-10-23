@@ -34,19 +34,6 @@ async function getActivities() {
   return data;
 }
 
-// Check room availability for specific dates
-async function checkRoomAvailabilityForDates(roomId, checkIn, checkOut) {
-  const { data, error } = await supabase
-    .from('reservations')
-    .select('*')
-    .eq('room_id', roomId)
-    .in('status', ['confirmed', 'pending'])
-    .or(`and(check_in_date.lte.${checkOut},check_out_date.gte.${checkIn})`);
-
-  if (error) return { available: false };
-  return { available: data.length === 0 };
-}
-
 export async function POST(request) {
   try {
     const { message, conversationContext } = await request.json();
@@ -123,23 +110,47 @@ IMPORTANT BOOKING INSTRUCTIONS:
   * Room 201 = ID 3
   * Room 202 = ID 4
   * Room 301 = ID 5
+- For spa services, use these IDs:
+  * Swedish Massage = ID 1
+  * Deep Tissue Massage = ID 2
+  * Hot Stone Therapy = ID 3
+  * Aromatherapy = ID 4
+  * Facial Treatment = ID 5
+  * Couples Massage = ID 6
 - Once you have ALL required information, respond naturally and include the BOOKING_REQUEST JSON
-- The booking will create a PENDING reservation that staff will review
-- Our system automatically checks if the room is available for those dates
+- Our system automatically checks if the room/service is available for those dates/times
 - Do NOT ask "Please confirm" or show the JSON to users - just create the request
 - Be conversational and ask for missing information naturally
 
 BOOKING_REQUEST FORMAT:
-For rooms: BOOKING_REQUEST: {"type":"room","data":{"roomId":1,"checkIn":"2025-12-25","checkOut":"2025-12-27","numGuests":2,"guestName":"John Doe","guestEmail":"john@email.com","guestPhone":"1234567890"}}
+For rooms: BOOKING_REQUEST: {
+  "type": "room",
+  "data": {
+    "roomId": 1,
+    "checkIn": "2025-12-25",     
+    "checkOut": "2025-12-27",   
+    "numGuests": 2,
+    "guestName": "John Doe",
+    "guestEmail": "john@email.com",
+    "guestPhone": "1234567890"
+  }
+}
 
-For spa: BOOKING_REQUEST: {"type":"spa","data":{"serviceId":1,"appointmentDate":"2025-12-25","appointmentTime":"14:00","guestName":"John Doe","guestEmail":"john@email.com","guestPhone":"1234567890"}}
+For spa: BOOKING_REQUEST: {
+  "type": "spa",
+  "data": {
+    "serviceId": 1,
+    "appointmentDate": "2025-12-25",
+    "appointmentTime": "14:00",
+    "guestName": "John Doe",
+    "guestEmail": "john@email.com",
+    "guestPhone": "1234567890"
+  }
+}
 
 CRITICAL: The JSON must be VALID and COMPLETE. Ensure all braces are closed. Do not add any text after the closing brace.
 
 Be friendly, professional, and helpful. Keep responses concise.
-
-CRITICAL :You should always confirm availability before confirming the booking.
-          You can also answer general questions about the resort.
       
 ${contextData}`;
 
@@ -183,23 +194,6 @@ ${contextData}`;
 
     // Check if AI wants to make a booking
     if (reply.includes('BOOKING_REQUEST:')) {
-
-      const { type, data } = bookingRequest;
-if (type === 'room') {
-  const { roomId, checkIn, checkOut } = data;
-
-  const protocol = request.headers.get('x-forwarded-proto') || 'http';
-  const host = request.headers.get('host') || 'localhost:3000';
-
-  const statusUrl = `${protocol}://${host}/api/bookings/status?roomId=${roomId}&checkIn=${checkIn}&checkOut=${checkOut}`;
-  const statusRes = await fetch(statusUrl);
-  const statusData = await statusRes.json();
-
-  if (!statusRes.ok || !statusData.isAvailable) {
-    reply += `\n\n⚠️ Sorry, this room is not available for those dates.\n${statusData.overlapping?.length ? 'Existing bookings:\n' + statusData.overlapping.map(o => `• ${o.check_in_date} → ${o.check_out_date} (${o.status})`).join('\n') : ''}`;
-    return NextResponse.json({ reply }); // Stop booking creation
-  }
-}
       const bookingMatch = reply.match(/BOOKING_REQUEST:\s*(\{[\s\S]*\})/);
       if (bookingMatch) {
         try {
@@ -216,10 +210,43 @@ if (type === 'room') {
           reply = reply.replace(/BOOKING_REQUEST:\s*\{[\s\S]*?\}/g, '').trim();
           reply = reply.replace(/\s+/g, ' ').trim();
           
-          // Make the booking
-          console.log('📤 Sending booking request:', bookingRequest);
+          // STEP 1: Check availability FIRST
           const protocol = request.headers.get('x-forwarded-proto') || 'http';
           const host = request.headers.get('host') || 'localhost:3000';
+          
+          console.log('📋 Checking availability first...');
+          const availabilityResponse = await fetch(`${protocol}://${host}/api/check-availability`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bookingRequest)
+          });
+
+          const availabilityResult = await availabilityResponse.json();
+          console.log('📥 Availability response:', availabilityResult);
+
+          // STEP 2: If NOT available, stop and inform user
+          if (!availabilityResult.available) {
+            // Extract a cleaner, user-friendly message
+            let conflictMessage = availabilityResult.message;
+            
+            // Make the message more conversational
+            reply = `I apologize, but the room you requested is not available for those dates. ${conflictMessage}`;
+            
+            if (availabilityResult.conflicts && availabilityResult.conflicts.length > 0) {
+              reply += `\n\n📅 These dates are already booked:`;
+              availabilityResult.conflicts.forEach((conflict, index) => {
+                const checkIn = conflict.check_in_date || conflict.appointment_date;
+                const checkOut = conflict.check_out_date || conflict.appointment_time;
+                reply += `\n   ${index + 1}. ${checkIn} to ${checkOut}`;
+              });
+              reply += `\n\nWould you like to:\n• Choose different dates?\n• Try another room?\n• See all available rooms?`;
+            }
+            
+            return NextResponse.json({ reply });
+          }
+
+          // STEP 3: If available, proceed with booking
+          console.log('✅ Available! Creating booking...');
           const bookingResponse = await fetch(`${protocol}://${host}/api/bookings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
