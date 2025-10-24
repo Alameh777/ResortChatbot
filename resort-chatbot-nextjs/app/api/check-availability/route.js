@@ -8,7 +8,7 @@ export async function POST(request) {
     if (type === 'room') {
       const { roomId, checkIn, checkOut } = data;
 
-      // Validate dates are not in the past
+      // Validate dates
       const checkInDate = new Date(checkIn);
       const checkOutDate = new Date(checkOut);
       const today = new Date();
@@ -17,14 +17,14 @@ export async function POST(request) {
       if (checkInDate < today) {
         return NextResponse.json({ 
           available: false, 
-          message: '❌ Cannot check availability for past dates. Check-in date must be today or in the future.' 
+          message: '❌ Cannot check availability for past dates. Check-in must be today or future.' 
         }, { status: 400 });
       }
 
       if (checkOutDate < today) {
         return NextResponse.json({ 
           available: false, 
-          message: '❌ Cannot check availability for past dates. Check-out date must be today or in the future.' 
+          message: '❌ Cannot check availability for past dates. Check-out must be today or future.' 
         }, { status: 400 });
       }
 
@@ -42,7 +42,7 @@ export async function POST(request) {
         }, { status: 404 });
       }
 
-      // Check for conflicting bookings (exclude cancelled)
+      // Check conflicts
       const { data: conflicts } = await supabase
         .from('bookings')
         .select('id, check_in_date, check_out_date, status')
@@ -55,7 +55,7 @@ export async function POST(request) {
       if (!available) {
         return NextResponse.json({
           available: false,
-          message: `Room ${room.room_number} (${room.room_type}) is already booked for the dates ${checkIn} to ${checkOut}.`,
+          message: `Room ${room.room_number} (${room.room_type}) is already booked for ${checkIn} to ${checkOut}.`,
           conflicts: conflicts
         });
       }
@@ -76,7 +76,7 @@ export async function POST(request) {
     if (type === 'spa') {
       const { serviceId, appointmentDate, appointmentTime } = data;
 
-      // Validate date is not in the past
+      // Validate date
       const apptDate = new Date(appointmentDate);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -84,11 +84,11 @@ export async function POST(request) {
       if (apptDate < today) {
         return NextResponse.json({ 
           available: false, 
-          message: '❌ Cannot check availability for past dates. Appointment date must be today or in the future.' 
+          message: '❌ Cannot check availability for past dates. Date must be today or future.' 
         }, { status: 400 });
       }
 
-      // Get service details
+      // Get service
       const { data: service } = await supabase
         .from('spa_services')
         .select('service_name, duration_minutes, price')
@@ -102,7 +102,7 @@ export async function POST(request) {
         }, { status: 404 });
       }
 
-      // Check for conflicting appointments (exclude cancelled)
+      // Check conflicts
       const { data: conflicts } = await supabase
         .from('spa_appointments')
         .select('id, appointment_time, status')
@@ -116,7 +116,7 @@ export async function POST(request) {
       if (!available) {
         return NextResponse.json({
           available: false,
-          message: `${service.service_name} is not available at ${appointmentTime} on ${appointmentDate}.`,
+          message: `${service.service_name} is already booked at ${appointmentTime} on ${appointmentDate}.`,
           conflicts: conflicts
         });
       }

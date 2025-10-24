@@ -4,7 +4,6 @@ import { supabase } from '@/lib/supabase';
 // Helper function to get or create user
 async function getOrCreateUser(name, email = null, phone = null) {
   try {
-    // First, try to find existing user by name
     const { data: existingUser, error: searchError } = await supabase
       .from('users')
       .select('id, name, email, phone')
@@ -12,7 +11,6 @@ async function getOrCreateUser(name, email = null, phone = null) {
       .single();
 
     if (existingUser) {
-      // User exists, optionally update email/phone if provided and different
       if ((email && existingUser.email !== email) || (phone && existingUser.phone !== phone)) {
         const { data: updatedUser } = await supabase
           .from('users')
@@ -29,7 +27,6 @@ async function getOrCreateUser(name, email = null, phone = null) {
       return { user: existingUser, isNew: false };
     }
 
-    // User doesn't exist, create new one
     const { data: newUser, error: insertError } = await supabase
       .from('users')
       .insert({
@@ -57,9 +54,9 @@ export async function POST(request) {
     const { type, data } = await request.json();
 
     if (type === 'room') {
-      const { roomId, guestName, guestEmail, guestPhone, checkIn, checkOut, numGuests } = data;
+      const { roomNumber, guestName, guestEmail, guestPhone, checkIn, checkOut, numGuests } = data;
 
-      // Validate dates are not in the past
+      // Validate dates
       const checkInDate = new Date(checkIn);
       const checkOutDate = new Date(checkOut);
       const today = new Date();
@@ -89,63 +86,64 @@ export async function POST(request) {
         }, { status: 500 });
       }
 
-      // Get room details for pricing
-      const { data: room } = await supabase
+      // Look up room by room_number
+      const { data: room, error: roomError } = await supabase
         .from('rooms')
-        .select('price_per_night, room_number')
-        .eq('id', roomId)
+        .select('id, room_number, room_type, price_per_night, capacity')
+        .eq('room_number', roomNumber)
         .single();
 
-      if (!room) {
+      if (roomError || !room) {
+        console.error('Room lookup error:', roomError);
         return NextResponse.json({ 
           success: false, 
-          message: 'Room not found' 
+          message: `Room ${roomNumber} not found` 
         }, { status: 404 });
       }
 
-      // Check for existing bookings that overlap with requested dates
+      if (numGuests > room.capacity) {
+        return NextResponse.json({ 
+          success: false, 
+          message: `Maximum capacity for Room ${roomNumber} is ${room.capacity} guests` 
+        }, { status: 400 });
+      }
+
+      // Check for conflicts
       const { data: existingBookings } = await supabase
         .from('bookings')
         .select('id, check_in_date, check_out_date')
-        .eq('room_id', roomId)
+        .eq('room_id', room.id)
         .neq('status', 'cancelled')
         .or(`and(check_in_date.lte.${checkOut},check_out_date.gte.${checkIn})`);
 
       if (existingBookings && existingBookings.length > 0) {
         return NextResponse.json({ 
           success: false, 
-          message: `Room ${room.room_number} is not available for the selected dates. Please choose different dates or another room.`,
+          message: `Room ${room.room_number} is not available for the selected dates`,
           conflictingBookings: existingBookings
         }, { status: 409 });
       }
 
-      // Calculate total price
+      // Calculate price
       const nights = Math.ceil((new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24));
       const totalPrice = room.price_per_night * nights;
 
-      // Insert booking with user_id with status 'pending'
+      // Create booking
       const { data: booking, error } = await supabase
         .from('bookings')
         .insert({
-          room_id: roomId,
+          room_id: room.id,
           user_id: user.id,
           check_in_date: checkIn,
           check_out_date: checkOut,
           number_of_guests: numGuests,
           total_price: totalPrice,
-          status: 'pending'  // Explicitly set to pending
+          status: 'pending'
         })
         .select(`
           *,
-          users (
-            name,
-            email,
-            phone
-          ),
-          rooms (
-            room_number,
-            room_type
-          )
+          users (name, email, phone),
+          rooms (room_number, room_type)
         `)
         .single();
 
@@ -161,14 +159,14 @@ export async function POST(request) {
         success: true, 
         booking,
         isNewUser: isNew,
-        message: `Booking request submitted for ${user.name}! ${isNew ? '(New user created) ' : ''}Booking ID: ${booking.id}. Room ${room.room_number} for ${nights} night(s). Total: $${totalPrice}. Status: PENDING - Awaiting confirmation.`
+        message: `Booking request submitted for ${user.name}! ${isNew ? '(New user) ' : ''}Booking ID: ${booking.id}. Room ${room.room_number} for ${nights} night(s). Total: $${totalPrice}. Status: PENDING - Awaiting confirmation.`
       });
     }
 
     if (type === 'spa') {
       const { serviceId, guestName, guestEmail, guestPhone, appointmentDate, appointmentTime } = data;
 
-      // Validate date is not in the past
+      // Validate date
       const apptDate = new Date(appointmentDate);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -190,7 +188,7 @@ export async function POST(request) {
         }, { status: 500 });
       }
 
-      // Get service details
+      // Get service
       const { data: service } = await supabase
         .from('spa_services')
         .select('service_name, duration_minutes, price')
@@ -204,7 +202,7 @@ export async function POST(request) {
         }, { status: 404 });
       }
 
-      // Check for existing appointments at the same time
+      // Check conflicts
       const { data: existingAppointments } = await supabase
         .from('spa_appointments')
         .select('id, appointment_time')
@@ -216,12 +214,12 @@ export async function POST(request) {
       if (existingAppointments && existingAppointments.length > 0) {
         return NextResponse.json({ 
           success: false, 
-          message: `The ${service.service_name} service is not available at ${appointmentTime} on ${appointmentDate}. Please choose a different time.`,
+          message: `${service.service_name} is not available at ${appointmentTime} on ${appointmentDate}`,
           conflictingAppointments: existingAppointments
         }, { status: 409 });
       }
 
-      // Insert spa appointment with user_id with status 'pending'
+      // Create appointment
       const { data: appointment, error } = await supabase
         .from('spa_appointments')
         .insert({
@@ -229,20 +227,12 @@ export async function POST(request) {
           user_id: user.id,
           appointment_date: appointmentDate,
           appointment_time: appointmentTime,
-          status: 'pending'  // Explicitly set to pending
+          status: 'pending'
         })
         .select(`
           *,
-          users (
-            name,
-            email,
-            phone
-          ),
-          spa_services (
-            service_name,
-            price,
-            duration_minutes
-          )
+          users (name, email, phone),
+          spa_services (service_name, price, duration_minutes)
         `)
         .single();
 
@@ -258,7 +248,7 @@ export async function POST(request) {
         success: true, 
         appointment,
         isNewUser: isNew,
-        message: `Spa appointment request submitted for ${user.name}! ${isNew ? '(New user created) ' : ''}Appointment ID: ${appointment.id}. ${service.service_name} on ${appointmentDate} at ${appointmentTime}. Status: PENDING - Awaiting confirmation.`
+        message: `Spa appointment request submitted for ${user.name}! ${isNew ? '(New user) ' : ''}Appointment ID: ${appointment.id}. ${service.service_name} on ${appointmentDate} at ${appointmentTime}. Status: PENDING - Awaiting confirmation.`
       });
     }
 
